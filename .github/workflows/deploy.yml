@@ -1,0 +1,78 @@
+# スプレッドシートから sessions.json を作り直して、GitHub Pages に公開する。
+#
+# 動くタイミング:
+#   ・1時間ごと（GitHubの混み具合で数分〜数十分遅れることがある）
+#   ・このリポジトリに写真などを push / アップロードしたとき
+#   ・Actions タブの「Run workflow」ボタンを押したとき（すぐ反映したいとき用）
+#
+# 事前準備:
+#   ・Settings → Secrets and variables → Actions → Variables に SHEET_CSV_URL を登録
+#   ・Settings → Pages → Source を「GitHub Actions」にする
+
+name: Update sessions and deploy
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sessions.json from spreadsheet
+        env:
+          SHEET_CSV_URL: ${{ vars.SHEET_CSV_URL }}
+        run: python scripts/build_sessions.py
+
+      - name: Commit sessions.json if changed
+        run: |
+          if git diff --quiet -- sessions.json; then
+            echo "sessions.json に変更はありません"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add sessions.json
+            git commit -m "Update sessions.json from spreadsheet"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp sessions.json _site/
+          if [ -d photos ]; then cp -r photos _site/; fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
